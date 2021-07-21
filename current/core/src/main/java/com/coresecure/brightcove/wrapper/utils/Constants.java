@@ -178,5 +178,12 @@ public class Constants {
 
     public static final String PLAYLIST_TYPE = "type";
 
+    public static final String NN_CF_JCR_CONTENT_DATA = "data";
+    public static final String PN_CF_CQ_MODEL = "cq:model";
+    public static final String PN_BC_METADATA_STATIC_PLAYLIST = "brc_staticPlaylistId";
+    public static final String PN_BC_PLAYLIST_NAME = "playlistName";
+    public static final String PN_BC_PLAYLIST_DESCRIPTION = "playlistDescription";
+    public static final String PN_BC_PLAYLIST_VIDEOIDS = "playlistVideoId";
+
 
 }
