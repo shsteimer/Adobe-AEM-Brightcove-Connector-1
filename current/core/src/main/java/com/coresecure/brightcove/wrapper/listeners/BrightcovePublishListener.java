@@ -1,9 +1,25 @@
 package com.coresecure.brightcove.wrapper.listeners;
 
+import com.coresecure.brightcove.wrapper.config.BrightcoveAccountService;
+import com.coresecure.brightcove.wrapper.objects.Video;
+import com.coresecure.brightcove.wrapper.sling.ConfigurationService;
+import com.coresecure.brightcove.wrapper.sling.ServiceUtil;
+import com.coresecure.brightcove.wrapper.utils.Constants;
+import com.coresecure.brightcove.wrapper.utils.JcrUtil;
+import com.day.cq.dam.api.Asset;
+import com.day.cq.dam.api.DamConstants;
 import com.day.cq.replication.ReplicationAction;
+import com.day.cq.replication.ReplicationActionType;
 import org.apache.sling.api.resource.LoginException;
+import org.apache.sling.api.resource.ModifiableValueMap;
+import org.apache.sling.api.resource.Resource;
 import org.apache.sling.api.resource.ResourceResolver;
 import org.apache.sling.api.resource.ResourceResolverFactory;
+import org.apache.sling.commons.json.JSONObject;
+import org.apache.sling.event.jobs.Job;
+import org.apache.sling.event.jobs.JobManager;
+import org.apache.sling.event.jobs.consumer.JobConsumer;
+import org.apache.sling.settings.SlingSettingsService;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Modified;
@@ -17,44 +33,27 @@ import org.osgi.service.metatype.annotations.Designate;
 import org.osgi.service.metatype.annotations.ObjectClassDefinition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.apache.sling.commons.json.JSONObject;
 
-import javax.jcr.RepositoryException;
 import java.io.InputStream;
-
-import com.coresecure.brightcove.wrapper.sling.ConfigurationGrabber;
-import com.coresecure.brightcove.wrapper.sling.ConfigurationService;
-import com.coresecure.brightcove.wrapper.sling.ServiceUtil;
-import com.coresecure.brightcove.wrapper.objects.Video;
-import com.coresecure.brightcove.wrapper.utils.Constants;
-import com.coresecure.brightcove.wrapper.utils.JcrUtil;
-
-import com.day.cq.dam.api.Asset;
-import com.day.cq.dam.api.DamConstants;
-
-import org.apache.sling.api.resource.*;
-import org.apache.sling.settings.SlingSettingsService;
- 
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Set;
-
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 
-@Component(service = EventHandler.class,
-    immediate = true,
-    property = {
-            "service.description" + "=Brightcove Distribution Event Listener ",
-            EventConstants.EVENT_TOPIC + "=" + ReplicationAction.EVENT_TOPIC
-    }
+@Component(service = {EventHandler.class, JobConsumer.class},
+        immediate = true,
+        property = {
+                "service.description" + "=Brightcove Distribution Event Listener ",
+                EventConstants.EVENT_TOPIC + "=" + ReplicationAction.EVENT_TOPIC,
+                JobConsumer.PROPERTY_TOPICS + "=" + BrightcovePublishListener.JOB_TOPIC
+        }
 )
 @Designate(ocd = BrightcovePublishListener.EventListenerPageActivationListenerConfiguration.class)
-public class BrightcovePublishListener implements EventHandler {
+public class BrightcovePublishListener implements EventHandler, JobConsumer {
 
     @ObjectClassDefinition(name = "Brightcove Distribution Listener")
     public @interface EventListenerPageActivationListenerConfiguration {
- 
+
         @AttributeDefinition(
                 name = "Enabled",
                 description = "Enable Distribution Event Listener",
@@ -62,15 +61,23 @@ public class BrightcovePublishListener implements EventHandler {
         )
         boolean isEnabled() default false;
     }
- 
+
     @Reference
     private ResourceResolverFactory resourceResolverFactory;
 
     @Reference
+    private JobManager jobManager;
+
+    @Reference
+    private BrightcoveAccountService brightcoveAccountService;
+
+    @Reference
     SlingSettingsService slingSettings;
- 
+
+
     private static final Logger LOG = LoggerFactory.getLogger(BrightcovePublishListener.class);
     private static final String SERVICE_ACCOUNT_IDENTIFIER = "brightcoveWrite";
+    public static final String JOB_TOPIC = "brightcove/replication";
 
     private boolean enabled = false;
     private Map<String, String> paths = null;
@@ -246,7 +253,7 @@ public class BrightcovePublishListener implements EventHandler {
 
                     } catch (Exception e) {
 
-                        LOG.error("Error!: {}"  , e.getMessage());
+                        LOG.error("Error!: {}", e.getMessage());
 
                     }
                 }
@@ -254,92 +261,60 @@ public class BrightcovePublishListener implements EventHandler {
         }
 
     }
- 
+
+    @Override
+    public JobResult process(Job job) {
+
+        // grab a resource resolver to pass to all the activation methods
+        final Map<String, Object> authInfo = Collections.singletonMap(
+                ResourceResolverFactory.SUBSERVICE,
+                SERVICE_ACCOUNT_IDENTIFIER);
+        try (ResourceResolver resolver = resourceResolverFactory.getServiceResourceResolver(authInfo)) {
+            String assetPath = job.getProperty("assetPath", "");
+            String replicationType = job.getProperty("replicationType", "");
+            ReplicationActionType replicationActionType = ReplicationActionType.fromName(replicationType);
+
+            Resource assetResource = resolver.getResource(assetPath);
+            if (assetResource != null) {
+                Asset asset = assetResource.adaptTo(Asset.class);
+                if (asset != null) {
+                    ConfigurationService service = brightcoveAccountService.getService(assetResource);
+                    if (service != null) {
+                        if (replicationActionType.equals(ReplicationActionType.ACTIVATE)) {
+                            activateAsset(resolver, asset, service.getAccountID());
+                        } else if (replicationActionType.equals(ReplicationActionType.DEACTIVATE)) {
+                            deactivateAsset(resolver, asset, service.getAccountID());
+                        }
+                    }
+                }
+            }
+        } catch (LoginException e) {
+            LOG.error("There was an error using the Brightcove system user.", e);
+            return JobResult.FAILED;
+        }
+
+        return JobResult.OK;
+    }
+
     @Override
     public void handleEvent(Event event) {
 
         // check that the service is enabled and that we are running on Author
-        if ( enabled && slingSettings.getRunModes().contains("author") )  {
+        if (enabled && slingSettings.getRunModes().contains("author")) {
 
-            try {
+            //event handlers must be fast, so fire a job for each path and do the processing there
+            ReplicationAction replicationAction = ReplicationAction.fromEvent(event);
 
-                // grab a resource resolver to pass to all the activation methods
-                final Map<String, Object> authInfo = Collections.singletonMap(
-                    ResourceResolverFactory.SUBSERVICE,
-                    (Object) SERVICE_ACCOUNT_IDENTIFIER);
+            ReplicationActionType type = replicationAction.getType();
+            String[] paths = replicationAction.getPaths();
 
-                // Get the Service resource resolver
-                ResourceResolver rr = resourceResolverFactory.getServiceResourceResolver(authInfo);
+            for (String path : paths) {
+                final Map<String, Object> props = new HashMap<>();
+                props.put("assetPath", path);
+                props.put("replicationType", type.getName());
 
-                // grab all the configured services
-                ConfigurationGrabber cg = ServiceUtil.getConfigurationGrabber();
-                Set<String> services = cg.getAvailableServices();
-
-                // set up a variable to store the paths
-                paths = new LinkedHashMap<>();
-                
-                // for each service, check to see the integration path
-                for ( String service : services ) {
-
-                    // get the service from that account ID
-                    ConfigurationService brcService = cg.getConfigurationService(service);
-
-                    // add the account ID to a HashMap with a key of the path
-                    paths.put(brcService.getAssetIntegrationPath(), brcService.getAccountID());
-
-                }
-
-                String[] activatedAssets = (String[]) event.getProperty("paths");
-
-                // iterate through all assets that were part of this replication event
-                for (String asset : activatedAssets) {
-
-                    // get all the account IDs of the integration paths
-                    Set<String> keys = paths.keySet();
-
-                    // check against the paths for each ConfigurationService
-                    for (String key : keys) {
-
-                        // check if this asset lives underneath a Brightcove managed folder
-                        if ( asset.contains(key) ) {
-
-                            // get the account ID
-                            String brightcoveAccountId = paths.get(key);
-                            LOG.info("Found Brightcove Account ID #{} for {}", brightcoveAccountId, asset);
-
-                            // get a proper Asset object from the path
-                            Resource assetResource = rr.getResource(asset);
-                            Asset _asset = assetResource.adaptTo(Asset.class);
-
-                            // check the activation type
-                            if ( "ACTIVATE".equals(event.getProperty("type")) ) {
-
-                                // upload or modify the asset
-                                activateAsset(rr, _asset, brightcoveAccountId);
-
-                            } else if ( "DEACTIVATE".equals(event.getProperty("type")) ) {
-
-                                // delete the asset
-                                deactivateAsset(rr, _asset, brightcoveAccountId);
-
-                            }
-                            
-                        }
-
-                    }
-
-                }
-
-            } catch (LoginException e) {
-
-                // there is some issue with the system user used
-                LOG.error("There was an error using the Brightcove system user.");
-
-            } catch (Exception e) {
-
-                // a general error
-                LOG.error("Error when handling the Brightcove video publish event: {}", e.getMessage());
-
+                Job job = jobManager.addJob(JOB_TOPIC, props);
+                LOG.info("job {} created to publish {} to brightcove - type {}", job.getId(), path, type.getName());
             }
 
         }
