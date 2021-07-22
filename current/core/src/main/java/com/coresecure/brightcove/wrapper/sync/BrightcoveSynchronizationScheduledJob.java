@@ -13,6 +13,7 @@ import com.day.cq.search.Query;
 import com.day.cq.search.QueryBuilder;
 import com.day.cq.search.result.Hit;
 import com.day.cq.search.result.SearchResult;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.sling.api.resource.LoginException;
 import org.apache.sling.api.resource.Resource;
 import org.apache.sling.api.resource.ResourceResolver;
@@ -27,7 +28,6 @@ import org.apache.sling.event.jobs.ScheduledJobInfo;
 import org.apache.sling.event.jobs.consumer.JobConsumer;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
-import org.osgi.service.component.annotations.ConfigurationPolicy;
 import org.osgi.service.component.annotations.Deactivate;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.metatype.annotations.AttributeDefinition;
@@ -49,7 +49,7 @@ import java.util.Set;
 
 @Component(service = JobConsumer.class, immediate = true, property = {
         JobConsumer.PROPERTY_TOPICS + "=" + BrightcoveSynchronizationScheduledJob.JOB_TOPIC
-}, configurationPolicy = ConfigurationPolicy.REQUIRE)
+})
 @Designate(ocd = BrightcoveSynchronizationScheduledJob.Configuration.class)
 public class BrightcoveSynchronizationScheduledJob implements JobConsumer {
 
@@ -198,26 +198,31 @@ public class BrightcoveSynchronizationScheduledJob implements JobConsumer {
     @Activate
     protected void activate(Configuration config) {
         String schedulingExpression = config.scheduler_expression();
-        JobBuilder jobBuilder = jobManager.createJob(JOB_TOPIC);
+        if (StringUtils.isNotEmpty(schedulingExpression)) {
+            JobBuilder jobBuilder = jobManager.createJob(JOB_TOPIC);
 
-        Map<String, Object> jobProps = new HashMap<>();
+            Map<String, Object> jobProps = new HashMap<>();
 
-        jobProps.put("shouldImportNewVideos", config.should_import_new_videos());
-        jobProps.put("queryCursorSize", config.query_cursor_size());
-        jobProps.put("maxAllowedVideos", config.max_videos_to_process());
+            jobProps.put("shouldImportNewVideos", config.should_import_new_videos());
+            jobProps.put("queryCursorSize", config.query_cursor_size());
+            jobProps.put("maxAllowedVideos", config.max_videos_to_process());
 
-        jobBuilder.properties(jobProps);
+            jobBuilder.properties(jobProps);
 
-        JobBuilder.ScheduleBuilder scheduleBuilder = jobBuilder.schedule();
+            JobBuilder.ScheduleBuilder scheduleBuilder = jobBuilder.schedule();
 
-        scheduleBuilder.cron(schedulingExpression);
+            scheduleBuilder.cron(schedulingExpression);
 
-        ScheduledJobInfo scheduledJobInfo = scheduleBuilder.add();
-        if (scheduledJobInfo == null) {
-            log.error("failed to add job.");
+            ScheduledJobInfo scheduledJobInfo = scheduleBuilder.add();
+            if (scheduledJobInfo == null) {
+                log.error("failed to add job.");
+            } else {
+                log.debug("Brightcove Sync Job Scheduled");
+            }
         } else {
-            log.debug("Brightcove Sync Job Scheduled");
+            log.debug("scheduling expression was empty.");
         }
+
     }
 
     @Deactivate
