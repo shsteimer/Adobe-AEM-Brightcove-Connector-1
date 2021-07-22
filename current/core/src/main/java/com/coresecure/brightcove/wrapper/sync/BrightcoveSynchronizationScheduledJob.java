@@ -57,6 +57,8 @@ public class BrightcoveSynchronizationScheduledJob implements JobConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(BrightcoveSynchronizationScheduledJob.class);
 
+    private Configuration config;
+
     @Reference
     private JobManager jobManager;
 
@@ -76,9 +78,13 @@ public class BrightcoveSynchronizationScheduledJob implements JobConsumer {
     @SuppressWarnings("squid:CallToDeprecatedMethod")
     public JobResult process(Job job) {
 
-        final boolean shouldImportNewVideos = job.getProperty("shouldImportNewVideos", false);
-        final int queryCursorSize = job.getProperty("queryCursorSize", 100);
-        final int maxAllowedVideos = job.getProperty("maxAllowedVideos", 100000);
+
+        //in practice, we could probably just read directly from the config here
+        //instead we are using job properties but using the config values as defaults
+        //this allows the configured values to be overridden by passing the job properties if ever needed
+        final boolean shouldImportNewVideos = job.getProperty("shouldImportNewVideos", config.should_import_new_videos());
+        final int queryCursorSize = job.getProperty("queryCursorSize", config.query_cursor_size());
+        final int maxAllowedVideos = job.getProperty("maxAllowedVideos", config.max_videos_to_process());
 
         Map<String, Object> bcServiceParams = Collections.singletonMap(ResourceResolverFactory.SUBSERVICE,
                                         Constants.SERVICE_ACCOUNT_IDENTIFIER);
@@ -197,6 +203,8 @@ public class BrightcoveSynchronizationScheduledJob implements JobConsumer {
 
     @Activate
     protected void activate(Configuration config) {
+        this.config = config;
+
         String schedulingExpression = config.scheduler_expression();
         if (StringUtils.isNotEmpty(schedulingExpression)) {
             JobBuilder jobBuilder = jobManager.createJob(JOB_TOPIC);
