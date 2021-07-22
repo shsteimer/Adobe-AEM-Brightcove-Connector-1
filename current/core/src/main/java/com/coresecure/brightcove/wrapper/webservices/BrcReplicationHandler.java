@@ -79,8 +79,6 @@ public class BrcReplicationHandler implements TransportHandler {
 		String brightcoveProtocol() default "brightcove://";
 	}
 
-    private static final String SERVICE_ACCOUNT_IDENTIFIER = "brightcoveWrite";
-
     private static final String ISO_8601_24H_FULL_FORMAT = "yyyy-MM-dd'T'HH:mm:ss.SSSXXX";
 
 
@@ -278,7 +276,7 @@ public class BrcReplicationHandler implements TransportHandler {
 
                 final Map<String, Object> authInfo = Collections.singletonMap(
                         ResourceResolverFactory.SUBSERVICE,
-                        (Object) SERVICE_ACCOUNT_IDENTIFIER);
+                        Constants.SERVICE_ACCOUNT_IDENTIFIER);
 
                 // Get the Service resource resolver
                 ResourceResolver rr = resourceResolverFactory.getServiceResourceResolver(authInfo);

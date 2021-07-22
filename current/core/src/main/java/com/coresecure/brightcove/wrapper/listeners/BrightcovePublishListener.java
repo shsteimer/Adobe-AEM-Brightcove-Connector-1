@@ -4,6 +4,7 @@ import com.coresecure.brightcove.wrapper.config.BrightcoveAccountService;
 import com.coresecure.brightcove.wrapper.services.BrightcoveAssetReplicationHandler;
 import com.coresecure.brightcove.wrapper.services.BrightcoveReplicationException;
 import com.coresecure.brightcove.wrapper.sling.ConfigurationService;
+import com.coresecure.brightcove.wrapper.utils.Constants;
 import com.day.cq.replication.ReplicationAction;
 import com.day.cq.replication.ReplicationActionType;
 import org.apache.sling.api.resource.LoginException;
@@ -73,7 +74,6 @@ public class BrightcovePublishListener implements EventHandler, JobConsumer {
 
 
     private static final Logger LOG = LoggerFactory.getLogger(BrightcovePublishListener.class);
-    private static final String SERVICE_ACCOUNT_IDENTIFIER = "brightcoveWrite";
     public static final String JOB_TOPIC = "brightcove/assets/replication";
 
     private boolean enabled = false;
@@ -92,7 +92,7 @@ public class BrightcovePublishListener implements EventHandler, JobConsumer {
         // grab a resource resolver to pass to all the activation methods
         final Map<String, Object> authInfo = Collections.singletonMap(
                 ResourceResolverFactory.SUBSERVICE,
-                SERVICE_ACCOUNT_IDENTIFIER);
+                Constants.SERVICE_ACCOUNT_IDENTIFIER);
         try (ResourceResolver resolver = resourceResolverFactory.getServiceResourceResolver(authInfo)) {
             String assetPath = job.getProperty("assetPath", "");
             String replicationType = job.getProperty("replicationType", "");

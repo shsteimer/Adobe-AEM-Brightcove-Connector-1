@@ -35,36 +35,24 @@ package com.coresecure.brightcove.wrapper.webservices;
 
 //*Imports*//
 
-import com.coresecure.brightcove.wrapper.schedulers.asset_integrator.AssetIntegratorCronBundle;
-import com.coresecure.brightcove.wrapper.schedulers.asset_integrator.callables.VideoImportCallable;
-import com.coresecure.brightcove.wrapper.sling.ConfigurationGrabber;
-import com.coresecure.brightcove.wrapper.sling.ConfigurationService;
-import com.coresecure.brightcove.wrapper.sling.ServiceUtil;
-import com.day.cq.commons.jcr.JcrUtil;
+import com.coresecure.brightcove.wrapper.sync.BrightcoveSynchronizationScheduledJob;
+import org.apache.sling.api.SlingHttpServletRequest;
+import org.apache.sling.api.SlingHttpServletResponse;
+import org.apache.sling.api.resource.ResourceResolverFactory;
+import org.apache.sling.api.servlets.SlingAllMethodsServlet;
+import org.apache.sling.commons.mime.MimeTypeService;
+import org.apache.sling.event.jobs.JobManager;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.component.propertytypes.ServiceDescription;
-import javax.servlet.Servlet;
-import org.apache.sling.api.SlingHttpServletRequest;
-import org.apache.sling.api.SlingHttpServletResponse;
-import org.apache.sling.api.resource.ResourceResolver;
-import org.apache.sling.api.resource.ResourceResolverFactory;
-import org.apache.sling.api.servlets.SlingAllMethodsServlet;
-import org.apache.sling.commons.json.JSONArray;
-import org.apache.sling.commons.json.JSONObject;
-import org.apache.sling.commons.mime.MimeTypeService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.jcr.Node;
-import javax.jcr.Session;
+import javax.servlet.Servlet;
 import javax.servlet.ServletException;
 import java.io.IOException;
-import java.util.*;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.HashMap;
+import java.util.Map;
 
 
 @Component(service = { Servlet.class },
@@ -75,9 +63,7 @@ import java.util.concurrent.Future;
 )
 @ServiceDescription("Brightcove Data Load Servlet")
 public class AssetPropertyIntegrator extends SlingAllMethodsServlet {
-    private static final String SERVICE_ACCOUNT_IDENTIFIER = "brightcoveWrite";
 
-    private static final String ISO_8601_24H_FULL_FORMAT = "yyyy-MM-dd'T'HH:mm:ss.SSSXXX";
     private static final Logger LOGGER = LoggerFactory.getLogger(AssetPropertyIntegrator.class);
 
     @Reference
@@ -87,7 +73,7 @@ public class AssetPropertyIntegrator extends SlingAllMethodsServlet {
     private transient ResourceResolverFactory resourceResolverFactory;
 
     @Reference
-    private transient AssetIntegratorCronBundle assetIntegratorCronBundle;
+    private JobManager jobManager;
 
     @Override
     protected void doPost(final SlingHttpServletRequest req, final SlingHttpServletResponse resp) throws ServletException, IOException {
@@ -95,79 +81,9 @@ public class AssetPropertyIntegrator extends SlingAllMethodsServlet {
     }
 
     private void executeRequest(final SlingHttpServletRequest req, final SlingHttpServletResponse resp) {
-        //INITIALIZING THE RESOURCE RESOLVER
-        ExecutorService executor = Executors.newFixedThreadPool(assetIntegratorCronBundle.getMaxThreadNum());
-        List<Future<String>> list = new ArrayList<Future<String>>();
-        LOGGER.debug("BRIGHTCOVE ASSET INTEGRATION - SYNCHRONIZING DATABASE");
-        try {
-
-
-            //MAIN TRY - CONFIGURATION GRAB SERVICE
-            ConfigurationGrabber cg = ServiceUtil.getConfigurationGrabber();    //GETCONFIG SERVICE
-            Set<String> services = cg.getAvailableServices();                            //BUILD SERVICES
-            for (String requestedAccount : services) {
-                final String requestedServiceAccount = requestedAccount;
-                //GET CURRENT CONFIGURATION
-                ConfigurationService cs = cg.getConfigurationService(requestedAccount);
-
-                if (cs == null) throw new Exception("[Invalid or missing Brightcove configuration]");
-
-                //IF ACCOUNT IS VALID - INITIATE SYNC CONFIGURATION
-                final Map<String, Object> authInfo = Collections.singletonMap(
-                        ResourceResolverFactory.SUBSERVICE,
-                        (Object) SERVICE_ACCOUNT_IDENTIFIER);
-                ResourceResolverFactory rrf = resourceResolverFactory;
-                final ResourceResolver resourceResolver = rrf.getServiceResourceResolver(authInfo);
-
-                if (resourceResolver == null) break;
-                synchronized (resourceResolver) {
-                    Session session = resourceResolver.adaptTo(Session.class); //GET CURRENT SESSION
-                    if (session == null) break;
-                    final String confPath = cs.getAssetIntegrationPath();                     //GET PRECONFIGURED SYNC DAM TARGET PATH
-
-                    final String basePath = (confPath.endsWith("/") ? confPath : confPath.concat("/")).concat(requestedAccount).concat("/"); //CREATE BASE PATH
-                    //CREATE AND NAME BRIGHTCOVE ASSET FOLDERS PER ACCOUNT
-                    Node accountFolder = JcrUtil.createPath(basePath, "sling:OrderedFolder", session);
-                    accountFolder.setProperty("jcr:title", cs.getAccountAlias());
-                    session.save();
-                    final ServiceUtil serviceUtil = new ServiceUtil(requestedAccount);
-
-                    //GET VIDEOS
-                    int startOffset = 0;
-                    JSONObject jsonObject = new JSONObject(serviceUtil.searchVideo("", startOffset, 0)); //QUERY<------
-                    final JSONArray itemsArr = jsonObject.getJSONArray("items");
-
-
-                    LOGGER.trace("<<< " + itemsArr.length() + " INCOMING VIDEOS");
-
-                    //FOR EACH VIDEO IN THE ITEMS ARRAY
-                    for (int i = 0; i < itemsArr.length(); i++) {
-                        final JSONObject innerObj = itemsArr.getJSONObject(i);
-
-                        Callable<String> callable = new VideoImportCallable(innerObj, confPath, requestedServiceAccount, resourceResolverFactory, mType, serviceUtil);
-                        Future<String> future = executor.submit(callable);
-                        //add Future to the list, we can get return value using Future
-                        list.add(future);
-                    }
-
-                    LOGGER.debug(">>>>FINISHED BRIGHTCOVE SYNC PAYLOAD TRAVERSAL>>>>");
-
-                }
-            }
-
-
-        } catch (Exception e) {
-            LOGGER.error("ERROR", e);
-        }
-        for (Future<String> fut : list) {
-            try {
-                LOGGER.trace(new Date() + "::" + fut.get());
-            } catch (Exception e) {
-                LOGGER.error("ERROR", e);
-            }
-        }
-        //shut down the executor service now
-        executor.shutdown();
+        LOGGER.info("firing the asset import job, actual import will be done there async.");
+        Map<String, Object> props = new HashMap<>();
+        jobManager.addJob(BrightcoveSynchronizationScheduledJob.JOB_TOPIC, props);
     }
 
     @Override

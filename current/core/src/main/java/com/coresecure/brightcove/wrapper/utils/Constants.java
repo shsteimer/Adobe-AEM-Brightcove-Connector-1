@@ -185,5 +185,8 @@ public class Constants {
     public static final String PN_BC_PLAYLIST_DESCRIPTION = "playlistDescription";
     public static final String PN_BC_PLAYLIST_VIDEOIDS = "playlistVideoId";
 
+   public static final String SERVICE_ACCOUNT_IDENTIFIER = "brightcoveWrite";
+
+    public static final String ISO_8601_24H_FULL_FORMAT = "yyyy-MM-dd'T'HH:mm:ss.SSSXXX";
 
 }
