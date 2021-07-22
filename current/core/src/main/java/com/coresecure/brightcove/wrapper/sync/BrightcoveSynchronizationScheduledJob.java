@@ -236,9 +236,11 @@ public class BrightcoveSynchronizationScheduledJob implements JobConsumer {
     @Deactivate
     protected void deactivate(Configuration config) {
         Collection<ScheduledJobInfo> scheduledJobInfos = jobManager.getScheduledJobs(JOB_TOPIC, 0, null);
-        for (ScheduledJobInfo scheduledJobInfo : scheduledJobInfos) {
-            log.debug("unscheduling job by name {} from topic.", JOB_TOPIC);
-            scheduledJobInfo.unschedule();
+        if (scheduledJobInfos != null && !scheduledJobInfos.isEmpty()) {
+            for (ScheduledJobInfo scheduledJobInfo : scheduledJobInfos) {
+                log.debug("unscheduling job by name {} from topic.", JOB_TOPIC);
+                scheduledJobInfo.unschedule();
+            }
         }
     }
 
